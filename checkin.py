@@ -16,7 +16,79 @@ import json
 import os
 import sys
 import time
-from datetime import datetime
+import smtplib
+import ssl
+from email.message import EmailMessage
+from html import escape
+from pathlib import Path
+from datetime import datetime, timedelta, timezone
+
+MAIL_TO = "418796833@qq.com"
+BEIJING = timezone(timedelta(hours=8))
+
+
+def checkin_succeeded(response):
+    if not isinstance(response, dict):
+        return False
+    message = str(response.get("message", "")).strip()
+    # The current API uses code=0, including a completed observation with no new points.
+    if "code" in response:
+        return response["code"] in (0, "0") or message == "Checkin Repeats! Please Try Tomorrow"
+    return message.startswith("Checkin! Got ") or message in (
+        "Checkin! Get 1 Day", "Checkin Repeats! Please Try Tomorrow",
+        "Today's observation logged. Return tomorrow for more points.",
+    )
+
+
+def dashboard_mail(reports):
+    """Send only the explicitly selected Dashboard fields, never the raw API response."""
+    now = datetime.now(BEIJING)
+    message = EmailMessage()
+    message["Subject"] = f"GLaDOS 签到成功 · Dashboard · {now:%Y-%m-%d %H:%M}"
+    message["From"] = MAIL_TO
+    message["To"] = MAIL_TO
+    sections = []
+    text_sections = []
+    for report in reports:
+        fields = [
+            ("账号", report["email"]), ("套餐", report["plan"]),
+            ("已用流量", report["used_traffic"]), ("月流量额度", report["traffic_limit"]),
+            ("剩余天数", report["left_days"]), ("当前积分", report["points"]),
+            ("签到结果", report["result"]),
+        ]
+        text_sections.append("\n".join(f"{label}：{value}" for label, value in fields))
+        rows = "".join(
+            f'<tr><th style="text-align:left;padding:9px;border-bottom:1px solid #ddd">{label}</th>'
+            f'<td style="padding:9px;border-bottom:1px solid #ddd">{escape(str(value))}</td></tr>'
+            for label, value in fields
+        )
+        sections.append(f'<table style="border-collapse:collapse;width:100%;margin-bottom:20px">{rows}</table>')
+    stamp = f"数据时间：{now:%Y-%m-%d %H:%M:%S}（北京时间）"
+    message.set_content("GLaDOS 签到成功 · Dashboard\n\n" + "\n\n".join(text_sections) + "\n\n" + stamp + "\nhttps://glados.cloud/console")
+    message.add_alternative(
+        '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><body style="font-family:Arial,sans-serif;color:#222">'
+        '<div style="max-width:640px;margin:auto;padding:24px"><h2>GLaDOS 签到成功</h2><p>Dashboard 数据摘要</p>'
+        + "".join(sections) + f'<p>{stamp}</p><p><a href="https://glados.cloud/console">打开 Dashboard</a></p></div></body></html>',
+        subtype="html",
+    )
+    return message
+
+
+def send_dashboard_email():
+    report_path = os.environ.get("DASHBOARD_REPORT_PATH", "")
+    reports = json.loads(Path(report_path).read_text(encoding="utf-8")) if report_path and Path(report_path).is_file() else []
+    if not reports:
+        log("⏭️ 没有成功签到且数据完整的账号，跳过 Dashboard 邮件")
+        return
+    password = os.environ.get("SMTP_PASSWORD", "").strip()
+    if not password:
+        raise RuntimeError("未配置 SMTP_PASSWORD（QQ 邮箱 SMTP 授权码）")
+    message = dashboard_mail(reports)
+    with smtplib.SMTP_SSL("smtp.qq.com", 465, context=ssl.create_default_context(), timeout=30) as smtp:
+        smtp.login(MAIL_TO, password)
+        if smtp.send_message(message):
+            raise RuntimeError("SMTP 拒绝了收件人")
+    log("✅ QQ SMTP 已接受 Dashboard 邮件；实际送达以收件箱为准")
 
 # Fix Windows Unicode Output
 if sys.platform.startswith('win'):
@@ -87,6 +159,8 @@ class GLaDOS:
         self.points_change = "?"
         self.exchange_info = ""
         self.plan = "?"
+        self.used_traffic = "未能读取"
+        self.traffic_limit = "未能读取"
         
     def req(self, method, path, data=None):
         """带自动域名切换的请求"""
@@ -118,6 +192,16 @@ class GLaDOS:
             d = res['data']
             self.email = d.get('email', 'Unknown')
             self.left_days = str(d.get('leftDays', '?')).split('.')[0]
+            # Verified against this account's live Dashboard: vip=21 is Basic / 200 GB.
+            # Unknown tiers stay explicit instead of displaying a guessed quota.
+            if str(d.get('vip')) == '21':
+                self.plan, self.traffic_limit = 'Basic', '200 GB'
+            else:
+                self.plan = f"未识别套餐（等级 {d.get('vip', '?')}）"
+            try:
+                self.used_traffic = f"{float(d['traffic']) / 1024 ** 3:.2f} GB"
+            except (KeyError, TypeError, ValueError):
+                pass
             return True
         return False
 
@@ -219,6 +303,10 @@ def main():
     if not cookies: sys.exit(1)
     
     results = []
+    email_reports = []
+    report_path = os.environ.get("DASHBOARD_REPORT_PATH", "")
+    if report_path:
+        Path(report_path).write_text('[]', encoding='utf-8')
     success_cnt = 0
     
     for i, cookie in enumerate(cookies, 1):
@@ -229,14 +317,24 @@ def main():
         msg = res.get('message', 'Failure') if res else "Network Error"
         
         # 2. Get Info (Refresh data)
-        g.get_status()
-        g.get_points()
+        status_ok = g.get_status()
+        points_ok = g.get_points()
         
         # 3. Log
-        status_icon = "✅" if "Checkin" in msg else "⚠️"
+        succeeded = checkin_succeeded(res)
+        status_icon = "✅" if succeeded else "⚠️"
         log(f"用户: {g.email} | 积分: {g.points} | 天数: {g.left_days} | 结果: {msg}")
         
-        if "Checkin" in msg: success_cnt += 1
+        if succeeded:
+            success_cnt += 1
+            if status_ok and points_ok:
+                email_reports.append({
+                    "email": g.email, "plan": g.plan, "used_traffic": g.used_traffic,
+                    "traffic_limit": g.traffic_limit, "left_days": g.left_days,
+                    "points": g.points, "result": msg,
+                })
+            else:
+                log("⚠️ 签到完成，但 Dashboard 数据读取不完整，不生成成功邮件")
         
         # 4. Result Formatting
         results.append(f"""
@@ -252,6 +350,9 @@ def main():
     </div>
 </div>
 """)
+
+    if report_path:
+        Path(report_path).write_text(json.dumps(email_reports, ensure_ascii=False), encoding='utf-8')
 
     # Push
     push_level = os.environ.get("PUSH_LEVEL", "all").lower()
@@ -274,5 +375,16 @@ def main():
         if tg_token and tg_chat_id:
             telegram_push(tg_token, tg_chat_id, title, content)
 
+    if success_cnt != len(cookies):
+        sys.exit(1)
+
 if __name__ == '__main__':
-    main()
+    if sys.argv[1:] == ['--email-only']:
+        try:
+            send_dashboard_email()
+        except Exception as exc:
+            # Do not print SMTP exceptions: server text may contain account or auth data.
+            log(f"❌ Dashboard 邮件发送失败：{type(exc).__name__}")
+            sys.exit(1)
+    else:
+        main()
