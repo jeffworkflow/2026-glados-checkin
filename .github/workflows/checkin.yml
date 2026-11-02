@@ -14,6 +14,8 @@ jobs:
   checkin:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      DASHBOARD_REPORT_PATH: ${{ runner.temp }}/glados-dashboard.json
 
     steps:
       - name: Checkout
@@ -29,6 +31,8 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run Checkin
+        id: checkin
+        continue-on-error: true
         run: python checkin.py
         timeout-minutes: 5
         env:
@@ -36,7 +40,7 @@ jobs:
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
 
       - name: Retry on Failure
-        if: failure()
+        if: ${{ steps.checkin.outcome == 'failure' }}
         run: |
           echo "First attempt failed, retrying in 60s..."
           sleep 60
@@ -45,3 +49,10 @@ jobs:
         env:
           GLADOS_COOKIE: ${{ secrets.GLADOS_COOKIE }}
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+
+      - name: Send Dashboard Email
+        if: ${{ success() }}
+        run: python checkin.py --email-only
+        timeout-minutes: 2
+        env:
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
