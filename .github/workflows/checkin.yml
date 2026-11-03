@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      DASHBOARD_REPORT_PATH: ${{ runner.temp }}/glados-dashboard.json
+      DASHBOARD_REPORT_PATH: /tmp/glados-dashboard.json
 
     steps:
       - name: Checkout
