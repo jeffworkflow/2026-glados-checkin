@@ -14,6 +14,8 @@ class DashboardEmailTest(unittest.TestCase):
         for response in (
             {'code': 0, 'message': 'Checkin! Got 10 Points'},
             {'code': 0, 'message': "Today's observation logged. Return tomorrow for more points."},
+            {'code': 1, 'message': "Today's observation logged. Return tomorrow for more points."},
+            {'code': '1', 'message': "Today's observation logged. Return tomorrow for more points."},
             {'code': 1, 'message': 'Checkin Repeats! Please Try Tomorrow'},
         ):
             self.assertTrue(checkin.checkin_succeeded(response))
@@ -48,7 +50,7 @@ class DashboardEmailTest(unittest.TestCase):
             report_file = Path(folder) / 'dashboard.json'
             with patch.dict(os.environ, {'DASHBOARD_REPORT_PATH': str(report_file), 'PUSH_LEVEL': 'fail_only'}, clear=True), \
                  patch.object(checkin, 'get_cookies', return_value=['private-cookie']), \
-                 patch.object(checkin.GLaDOS, 'checkin', return_value={'code': 0, 'message': 'Checkin! Got 10 Points'}), \
+                 patch.object(checkin.GLaDOS, 'checkin', return_value={'code': 1, 'message': "Today's observation logged. Return tomorrow for more points."}), \
                  patch.object(checkin.GLaDOS, 'get_status', return_value=True), \
                  patch.object(checkin.GLaDOS, 'get_points', return_value=True):
                 checkin.main()
