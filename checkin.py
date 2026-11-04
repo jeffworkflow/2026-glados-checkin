@@ -31,9 +31,12 @@ def checkin_succeeded(response):
     if not isinstance(response, dict):
         return False
     message = str(response.get("message", "")).strip()
-    # The current API uses code=0, including a completed observation with no new points.
+    # Already-recorded responses can carry a nonzero code.
     if "code" in response:
-        return response["code"] in (0, "0") or message == "Checkin Repeats! Please Try Tomorrow"
+        return response["code"] in (0, "0") or message in (
+            "Checkin Repeats! Please Try Tomorrow",
+            "Today's observation logged. Return tomorrow for more points.",
+        )
     return message.startswith("Checkin! Got ") or message in (
         "Checkin! Get 1 Day", "Checkin Repeats! Please Try Tomorrow",
         "Today's observation logged. Return tomorrow for more points.",
