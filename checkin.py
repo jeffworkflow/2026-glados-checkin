@@ -7,7 +7,7 @@
 - 全自动签到
 - 精准获取当前积分 (Points)
 - PushPlus 微信推送（包含积分、剩余天数、签到结果）
-- 智能多域名切换 (优先 glados.cloud)
+- 智能多域名切换 (优先 glados.one)
 - 支持 Cookie-Editor 导出格式
 """
 
@@ -67,11 +67,11 @@ def dashboard_mail(reports):
         )
         sections.append(f'<table style="border-collapse:collapse;width:100%;margin-bottom:20px">{rows}</table>')
     stamp = f"数据时间：{now:%Y-%m-%d %H:%M:%S}（北京时间）"
-    message.set_content("GLaDOS 签到成功 · Dashboard\n\n" + "\n\n".join(text_sections) + "\n\n" + stamp + "\nhttps://glados.cloud/console")
+    message.set_content("GLaDOS 签到成功 · Dashboard\n\n" + "\n\n".join(text_sections) + "\n\n" + stamp + "\nhttps://glados.one/console")
     message.add_alternative(
         '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><body style="font-family:Arial,sans-serif;color:#222">'
         '<div style="max-width:640px;margin:auto;padding:24px"><h2>GLaDOS 签到成功</h2><p>Dashboard 数据摘要</p>'
-        + "".join(sections) + f'<p>{stamp}</p><p><a href="https://glados.cloud/console">打开 Dashboard</a></p></div></body></html>',
+        + "".join(sections) + f'<p>{stamp}</p><p><a href="https://glados.one/console">打开 Dashboard</a></p></div></body></html>',
         subtype="html",
     )
     return message
@@ -101,7 +101,7 @@ if sys.platform.startswith('win'):
 
 # 域名优先级：Cloud 第一
 DOMAINS = [
-    "https://glados.cloud",
+    "https://glados.one",
     "https://glados.rocks", 
     "https://glados.network",
 ]
@@ -241,7 +241,7 @@ class GLaDOS:
 
     def checkin(self):
         """执行签到"""
-        return self.req('POST', '/api/user/checkin', {'token': 'glados.cloud'})
+        return self.req('POST', '/api/user/checkin', {'token': 'glados.one'})
 
 # ================= 主程序 =================
 
@@ -326,7 +326,7 @@ def main():
         # 3. Log
         succeeded = checkin_succeeded(res)
         status_icon = "✅" if succeeded else "⚠️"
-        log(f"用户: {g.email} | 积分: {g.points} | 天数: {g.left_days} | 结果: {msg}")
+        log(f"站点: {g.domain} | 用户: {g.email} | 积分: {g.points} | 天数: {g.left_days} | 结果: {msg}")
         
         if succeeded:
             success_cnt += 1
