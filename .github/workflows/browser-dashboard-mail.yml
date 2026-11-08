@@ -1,0 +1,50 @@
+name: GLaDOS Browser Dashboard Email
+
+on:
+  workflow_dispatch:
+    inputs:
+      report:
+        description: 'Browser Dashboard JSON (no Cookie or tokens)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  email:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+      - name: Send Browser Dashboard Email
+        env:
+          BROWSER_REPORT: ${{ inputs.report }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          DASHBOARD_REPORT_PATH: /tmp/glados-browser-dashboard.json
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from checkin import MAIL_TO, send_dashboard_email
+
+          report = json.loads(os.environ['BROWSER_REPORT'])
+          fields = {'email', 'plan', 'used_traffic', 'traffic_limit', 'left_days', 'points', 'result'}
+          if not isinstance(report, dict) or set(report) != fields:
+              raise ValueError('Expected exactly the selected Dashboard fields')
+          if any(not isinstance(value, str) or not value.strip() or len(value) > 500 for value in report.values()):
+              raise ValueError('Dashboard fields must be nonempty short strings')
+          if report['email'] != MAIL_TO or not report['points'].isdigit():
+              raise ValueError('Unexpected account or points')
+          Path(os.environ['DASHBOARD_REPORT_PATH']).write_text(
+              json.dumps([report], ensure_ascii=False), encoding='utf-8')
+          send_dashboard_email()
+          PY
